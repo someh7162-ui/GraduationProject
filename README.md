@@ -40,7 +40,7 @@ uv run uvicorn app.main:app --reload
 ## 导入校园资料（含 PDF）
 
 支持 JSON、NDJSON、CSV 和 PDF；PDF 会按页切分写入 `contents`，自动生成
-`content_hash`、来源字段并去重，可重复执行：
+`content_hash`、来源字段并按 `source_id`/来源链接/内容哈希去重，可重复执行：
 
 ```powershell
 uv run python scripts/import_campus_data.py "data/新疆工程学院公开校内信息汇总.pdf"
@@ -48,6 +48,10 @@ uv run python scripts/import_campus_data.py "data/新疆工程学院公开校内
 
 RAG 使用 TF-IDF 字符 n-gram 检索最多 5 条资料，`RAG_MIN_SCORE`（默认 `0.02`）
 用于拒答低相关问题，返回结果包含来源链接、部门和相似度。
+
+Windows 上若安装了 Poppler，将优先使用 `pdftotext` 读取本 PDF 的中文字体映射；
+未安装时回退到 `pypdf`。如需把 PDF 中的每条新闻（而非每页）拆成独立记录，
+先运行 `data/parse_pdf.py`，再用 `scripts/build_campus_dataset.py` 合并详情页数据后导入。
 
 ## 主要流程
 
