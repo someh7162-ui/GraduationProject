@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse
 from . import store, llm
+from sqlalchemy import select, text
+from app.access import classes, can_manage_class, require_class, profile_identity, validate_identity, IDENTITY_FIELDS
 from .schemas import ConfirmImport, ProfileUpdate, PolicyDraft, SessionCreate, Message, Fact, CourseCorrection, ClassRankingConfirm
 from .documents import parse_transcript, text_pages, merge_courses, course_key
 from .assistant import run
@@ -34,8 +36,8 @@ def register(app, engine, current):
         return user
 
     def ranking_manager(user=Depends(current)):
-        if user['role'] not in ('admin', 'counselor'):
-            raise HTTPException(403, '仅辅导员或管理员可处理班级成绩排名')
+        if user['role'] not in ('admin', 'counselor', 'academic_admin'):
+            raise HTTPException(403, '仅辅导员、学院管理员或系统管理员可处理班级排名')
         return user
 
     async def upload(file, allowed):
@@ -99,7 +101,9 @@ def register(app, engine, current):
         with engine.begin() as conn:
             document = store.get(conn, store.documents, identifier, user['id'])
             profile = store.profile(conn, user['id'])
+            validate_identity(body.facts, user)
             incoming = body.model_dump()
+            incoming['facts'] = {key: value for key, value in incoming['facts'].items() if key not in IDENTITY_FIELDS}
             for item in [*incoming['courses'], *incoming['facts'].values()]:
                 # Source ownership cannot be supplied by a client.
                 item['sources'] = [{'document_id': identifier, 'filename': document['payload']['filename'],
@@ -140,11 +144,16 @@ def register(app, engine, current):
     @router.get('/academic-profile')
     def get_profile(user=Depends(current)):
         with engine.begin() as conn:
-            return store.profile(conn, user['id'])
+            record = store.profile(conn, user['id'])
+            record['payload'] = profile_identity(conn, user['id'], record['payload'])
+            return record
 
     def merge_facts(conn, user_id, facts):
         if len(facts) > 100:
             raise HTTPException(422, '一次最多补充 100 个字段')
+        account = conn.execute(text('SELECT * FROM users WHERE id=:id'), {'id': user_id}).mappings().one()
+        validate_identity(facts, account)
+        facts = {key: value for key, value in facts.items() if key not in IDENTITY_FIELDS}
         profile = store.profile(conn, user_id)
         data = copy.deepcopy(profile['payload'])
         for key, fact in facts.items():
@@ -164,18 +173,31 @@ def register(app, engine, current):
         with engine.begin() as conn:
             return merge_facts(conn, user['id'], body.facts)
 
+    def ranking_allowed(conn, user, record):
+        name = record['payload'].get('ranking', {}).get('class_name')
+        directory = conn.execute(select(classes).where(classes.c.name == name)).mappings().first()
+        return can_manage_class(user, directory)
+
+    def scoped_ranking(conn, identifier, user):
+        record = store.get(conn, store.rankings, identifier)
+        if not ranking_allowed(conn, user, record):
+            raise HTTPException(404, '班级排名不存在或不在负责范围')
+        return record
+
     @router.get('/class-rankings')
     def list_class_rankings(user=Depends(ranking_manager)):
         with engine.connect() as conn:
-            return store.listing(conn, store.rankings, user['id'])
+            return [record for record in store.listing(conn, store.rankings) if ranking_allowed(conn, user, record)]
 
     @router.get('/class-rankings/{identifier}')
     def get_class_ranking(identifier: str, user=Depends(ranking_manager)):
         with engine.connect() as conn:
-            return store.get(conn, store.rankings, identifier, user['id'])
+            return scoped_ranking(conn, identifier, user)
 
     @router.post('/class-rankings')
     async def create_class_ranking(files: list[UploadFile] = File(...), academic_year: str = Form(...), class_name: str = Form(...), user=Depends(ranking_manager)):
+        with engine.connect() as conn:
+            require_class(conn, user, class_name)
         if not 2 <= len(files) <= 6:
             raise HTTPException(422, '请上传 2 至 6 张同一学年、同一班级的成绩单图片')
         sheets = []
@@ -201,7 +223,10 @@ def register(app, engine, current):
         except ValueError as exc:
             raise HTTPException(422, str(exc))
         with engine.begin() as conn:
-            record = store.get(conn, store.rankings, identifier, user['id'])
+            record = scoped_ranking(conn, identifier, user)
+            require_class(conn, user, ranking['class_name'])
+            if ranking['class_name'] != record['payload']['ranking']['class_name']:
+                raise HTTPException(422, '不能在确认时替换原班级')
             payload = copy.deepcopy(record['payload'])
             payload.update(sheets=[sheet.model_dump() for sheet in body.sheets], ranking=ranking, rank_method=body.rank_method,
                            confirmed_at=store.now(), notice='排名已由经办人核对确认；结果仍以教务系统正式数据为准。')

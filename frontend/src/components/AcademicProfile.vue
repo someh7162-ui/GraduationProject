@@ -33,10 +33,10 @@ onMounted(() => load().catch(e => error.value = e.message))
 </script>
 <template>
   <section class="academic-view">
-    <h1>我的学业档案</h1><p class="muted">导入成绩单，核对后用于奖学金资格初评。材料仅对你的账号可见。</p>
+    <h1>我的学业档案</h1><p class="muted">导入成绩单，核对后用于奖学金资格初评。个人材料按账号隔离；授权管理人员可在负责范围内查看已确认档案。</p>
     <p v-if="error" role="alert" class="inline-error">{{error}}</p><p v-if="note" role="status">{{note}}</p>
     <label class="upload-button">{{busy ? '正在处理…' : '导入成绩单'}}<input type="file" accept=".pdf,.xls,.xlsx" :disabled="busy" @change="upload" /></label>
-    <p class="muted">支持文字型 PDF、XLS、XLSX，单个文件不超过 10 MB。</p>
+    <p class="muted">身份：{{profile.facts?.college?.value || '待核对'}} · {{profile.facts?.major?.value || '待核对'}} · {{profile.facts?.grade?.value || '待核对'}} · {{profile.facts?.class_name?.value || '班级待管理员分配'}}</p><p class="muted">辅助识别后请人工确认再导入。支持文字型 PDF、XLS、XLSX，单个文件不超过 10 MB。</p>
     <article v-if="preview" class="academic-card">
       <h2>核对导入内容 · {{preview.payload.filename}}</h2>
       <p v-for="warning in preview.payload.preview.warnings" :key="warning" class="academic-warning">{{warning}}</p>

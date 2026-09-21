@@ -26,7 +26,7 @@ def client():
 
 def account(client, admin=False):
     username = 'test_' + uuid.uuid4().hex[:12]
-    body = {'username': username, 'password': 'test-password-123', 'name': '模拟用户', 'role': 'student', 'college': '测试学院', 'grade': '大四'}
+    body = {'username': username, 'password': 'test-password-123', 'name': '模拟用户', 'role': 'student', 'college': '信息工程学院', 'major': '计算机科学与技术', 'grade': '大四'}
     assert client.post('/auth/register', json=body).status_code == 200
     login = client.post('/auth/login', json={'username': username, 'password': body['password']}).json()
     if admin:
@@ -312,6 +312,8 @@ def test_class_ranking_merge_ties_missing_terms_and_permissions(client, monkeypa
     student = account(client)
     assert client.get('/class-rankings', headers=student).status_code == 403
     admin = account(client, True)
+    response = client.post('/admin/classes', headers=admin, json={'name':'计科23-A1','college_code':'information_engineering'})
+    assert response.status_code in {200,409}
     parsed = iter([first, second])
     monkeypatch.setattr('app.academic.api.parse_score_image', lambda *args, **kwargs: next(parsed))
     response = client.post('/class-rankings', headers=admin, data={'academic_year':YEAR,'class_name':'计科23-A1'},

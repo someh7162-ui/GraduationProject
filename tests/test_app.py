@@ -16,8 +16,8 @@ def client():
         yield c
 
 
-def register(client, username="student_test", role="student", college="计算机学院",
-             major="软件工程", grade="大一"):
+def register(client, username="student_test", role="student", college="信息工程学院",
+             major="计算机科学与技术", grade="大一"):
     return client.post("/auth/register", json={
         "username": username, "password": PASSWORD, "name": "测试用户",
         "role": role, "college": college, "major": major, "grade": grade,
@@ -72,3 +72,31 @@ def test_content_target_fields_are_json_arrays(client):
     items = client.get("/recommendations", headers=h).json()["items"]
     assert items
     assert all(isinstance(item["target_majors"], list) for item in items)
+
+
+def test_recommendation_metrics_and_event_guards(client):
+    from app.campus import engine, contents, jt, now
+    assert register(client, username="metrics_test").status_code == 200
+    h = auth(client, "metrics_test")
+    assert client.get("/recommendations", headers=h).json()["metrics"]["interest_match_rate"] is None
+    assert onb(client, h, [1, 2, 3]).status_code == 200
+    feed = client.get("/recommendations?page_size=2", headers=h).json()
+    assert len(feed["items"]) <= 2
+    assert feed["metrics"]["sample_size"] == len(feed["items"])
+    assert feed["metrics"]["matched_count"] == sum(bool(r["matched_tags"]) for r in feed["items"])
+    assert client.get("/recommendations?page_size=0", headers=h).status_code == 422
+    identifier = feed["items"][0]["id"]
+    assert client.post("/events", headers=h, json={"content_id": identifier, "event_type": "fake"}).status_code == 422
+    assert client.post("/events", headers=h, json={"content_id": 999999, "event_type": "click"}).status_code == 404
+    with engine.begin() as conn:
+        hidden = conn.execute(contents.insert().values(title="受限测试", body="不可访问", tags=jt(["新生入学"]), target_roles=jt(["admin"]), status="published", publish_time=now())).inserted_primary_key[0]
+    assert client.post("/events", headers=h, json={"content_id": hidden, "event_type": "favorite"}).status_code == 404
+    assert client.post("/events", headers=h, json={"content_id": identifier, "event_type": "favorite"}).status_code == 200
+    after = client.get("/recommendations", headers=h).json()
+    assert next(r for r in after["items"] if r["id"] == identifier)["score_detail"]["profile"] > 0
+
+
+def test_catalog_registration_rejects_invalid_identity(client):
+    assert register(client, username="invalid_college", college="计算机学院").status_code == 422
+    assert register(client, username="invalid_major", major="软件工程").status_code == 422
+    assert register(client, username="invalid_role", role="admin").status_code == 422

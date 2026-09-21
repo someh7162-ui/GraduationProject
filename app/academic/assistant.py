@@ -2,6 +2,7 @@
 import copy
 import re
 from sqlalchemy import text
+from app.access import profile_identity
 from . import store, llm
 from .rules import calculate, evaluate, verify
 from .schemas import Fact
@@ -120,17 +121,7 @@ def run(engine, session_id, user_id):
             elif tool == 'read_profile':
                 with engine.begin() as conn:
                     profile_record = store.profile(conn, user_id)
-                    snapshot = copy.deepcopy(profile_record['payload'])
-                    account = conn.execute(text('SELECT college, major, grade FROM users WHERE id = :user_id'), {'user_id': user_id}).mappings().first()
-                if account:
-                    source = [{'filename': '用户账户', 'locator': '注册信息'}]
-                    snapshot.setdefault('facts', {})
-                    for key in ('college', 'major', 'grade'):
-                        if account.get(key) and key not in snapshot['facts']:
-                            snapshot['facts'][key] = {'value': account[key], 'academic_year': None, 'sources': source, 'confirmed': True}
-                    levels = {'大一': 1, '大二': 2, '大三': 3, '大四': 4, '研一': 1, '研二': 2, '研三': 3}
-                    if account.get('grade') in levels and 'grade_level' not in snapshot['facts']:
-                        snapshot['facts']['grade_level'] = {'value': levels[account['grade']], 'academic_year': None, 'sources': source, 'confirmed': True}
+                    snapshot = profile_identity(conn, user_id, profile_record['payload'])
             elif tool == 'calculate_metrics':
                 payload['metrics'] = calculate(snapshot, policy)
             elif tool == 'check_conditions':

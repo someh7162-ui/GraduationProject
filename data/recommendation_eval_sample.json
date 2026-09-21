@@ -1,0 +1,194 @@
+{
+  "name": "Synthetic pipeline smoke test - not real-world evidence",
+  "synthetic": true,
+  "cutoff": "2026-09-21T00:00:00+00:00",
+  "contents": [
+    {
+      "id": 1,
+      "title": "合成样例1",
+      "tags": [
+        "竞赛"
+      ],
+      "status": "published",
+      "publish_time": "2026-09-01T00:00:00+00:00"
+    },
+    {
+      "id": 2,
+      "title": "合成样例2",
+      "tags": [
+        "就业"
+      ],
+      "status": "published",
+      "publish_time": "2026-09-01T00:00:00+00:00"
+    },
+    {
+      "id": 3,
+      "title": "合成样例3",
+      "tags": [
+        "体育"
+      ],
+      "status": "published",
+      "publish_time": "2026-09-01T00:00:00+00:00"
+    },
+    {
+      "id": 4,
+      "title": "合成样例4",
+      "tags": [
+        "学业"
+      ],
+      "status": "published",
+      "publish_time": "2026-09-01T00:00:00+00:00"
+    },
+    {
+      "id": 5,
+      "title": "合成样例5",
+      "tags": [
+        "竞赛"
+      ],
+      "status": "published",
+      "publish_time": "2026-09-01T00:00:00+00:00",
+      "target_grades": [
+        "大一"
+      ]
+    },
+    {
+      "id": 6,
+      "title": "合成样例6",
+      "tags": [
+        "就业"
+      ],
+      "status": "published",
+      "publish_time": "2026-09-01T00:00:00+00:00"
+    },
+    {
+      "id": 7,
+      "title": "合成样例7",
+      "tags": [
+        "体育"
+      ],
+      "status": "published",
+      "publish_time": "2026-09-01T00:00:00+00:00"
+    },
+    {
+      "id": 8,
+      "title": "合成样例8",
+      "tags": [
+        "学业"
+      ],
+      "status": "published",
+      "publish_time": "2026-09-01T00:00:00+00:00"
+    },
+    {
+      "id": 9,
+      "title": "合成样例9",
+      "tags": [
+        "竞赛"
+      ],
+      "status": "published",
+      "publish_time": "2026-09-01T00:00:00+00:00",
+      "end_time": "2026-09-21T12:00:00+00:00"
+    },
+    {
+      "id": 10,
+      "title": "合成样例10",
+      "tags": [
+        "就业"
+      ],
+      "status": "published",
+      "publish_time": "2026-09-01T00:00:00+00:00"
+    },
+    {
+      "id": 11,
+      "title": "合成样例11",
+      "tags": [
+        "体育"
+      ],
+      "status": "published",
+      "publish_time": "2026-09-01T00:00:00+00:00"
+    },
+    {
+      "id": 12,
+      "title": "合成样例12",
+      "tags": [
+        "学业"
+      ],
+      "status": "published",
+      "publish_time": "2026-09-01T00:00:00+00:00"
+    }
+  ],
+  "cases": [
+    {
+      "user": {
+        "id": 1,
+        "role": "student",
+        "college": "信息工程学院",
+        "major": "计算机科学与技术",
+        "grade": "大一",
+        "interests": [
+          "竞赛"
+        ]
+      },
+      "history": [
+        {
+          "user_id": 1,
+          "content_id": 1,
+          "event_type": "favorite",
+          "timestamp": "2026-09-20T00:00:00+00:00"
+        }
+      ],
+      "relevant_ids": [
+        5,
+        9
+      ]
+    },
+    {
+      "user": {
+        "id": 2,
+        "role": "student",
+        "college": "信息工程学院",
+        "major": "计算机科学与技术",
+        "grade": "大一",
+        "interests": [
+          "就业"
+        ]
+      },
+      "history": [
+        {
+          "user_id": 2,
+          "content_id": 2,
+          "event_type": "favorite",
+          "timestamp": "2026-09-20T00:00:00+00:00"
+        }
+      ],
+      "relevant_ids": [
+        6,
+        10
+      ]
+    },
+    {
+      "user": {
+        "id": 3,
+        "role": "student",
+        "college": "信息工程学院",
+        "major": "计算机科学与技术",
+        "grade": "大一",
+        "interests": [
+          "体育"
+        ]
+      },
+      "history": [
+        {
+          "user_id": 3,
+          "content_id": 3,
+          "event_type": "favorite",
+          "timestamp": "2026-09-20T00:00:00+00:00"
+        }
+      ],
+      "relevant_ids": [
+        3,
+        7,
+        11
+      ]
+    }
+  ]
+}

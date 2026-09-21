@@ -1,0 +1,31 @@
+*** Begin Patch
+*** Update File: frontend/src/App.vue
+@@
+-import { computed, onMounted, ref } from 'vue'
++import { computed, onMounted, ref, watch } from 'vue'
+@@
+ import PolicyManager from './components/PolicyManager.vue'
+ import ClassRanking from './components/ClassRanking.vue'
++import { XJIE_ACADEMIC_UNITS, XJIE_STUDENT_COLLEGES } from './data/xjieAcademics'
+@@
+ const form = ref({ username: '', password: '', name: '', role: 'student', college: '', major: '', grade: '' })
+@@
+ const roleLabel = computed(() => ({student:'学生',counselor:'辅导员',organizer:'活动组织者'}[user.value?.role] || '校园用户'))
++const collegeOptions = computed(() => form.value.role === 'student' ? XJIE_STUDENT_COLLEGES : XJIE_ACADEMIC_UNITS)
++const currentCollege = computed(() => XJIE_ACADEMIC_UNITS.find(item => item.name === form.value.college) || null)
++const majorOptions = computed(() => currentCollege.value?.majors || [])
+ const greeting = computed(() => user.value?.grade === '大一' ? '欢迎来到校园生活。' : user.value?.grade === '大四' ? '毕业季也要稳稳向前。' : '今天也为你准备了新内容。')
+@@
+ function notify(text) { toast.value = text; clearTimeout(notify.timer); notify.timer = setTimeout(() => toast.value = '', 2600) }
+ function fail(text) { error.value = text; setTimeout(() => error.value = '', 4500) }
++watch(() => form.value.college, (college, previous) => {
++  if (college !== previous) form.value.major = ''
++})
++watch(() => form.value.role, () => {
++  form.value.college = ''
++  form.value.major = ''
++})
+@@
+-<div class="form-row"><label>学院<input v-model="form.college" required placeholder="例如：软件学院"></label><label>年级<select v-model="form.grade" :required="form.role==='student'"><option value="">选择年级</option><option>大一</option><option>大二</option><option>大三</option><option>大四</option></select></label></div></template><label>用户名<input v-model="form.username" required placeholder="用户名"></label>
++<div class="form-row"><label>学院<select v-model="form.college" required><option value="" disabled>选择学院</option><option v-for="college in collegeOptions" :key="college.name" :value="college.name">{{college.name}}</option></select></label><label>年级<select v-model="form.grade" :required="form.role==='student'"><option value="">选择年级</option><option>大一</option><option>大二</option><option>大三</option><option>大四</option></select></label></div><label>专业<select v-model="form.major" :required="form.role==='student'" :disabled="!form.college || !majorOptions.length"><option value="">{{!form.college?'请先选择学院':majorOptions.length?'选择专业':'该学院暂无普通本科专业选项'}}</option><option v-for="item in majorOptions" :key="`${item.code}-${item.name}`" :value="item.name">{{item.name}}（{{item.code}}）</option></select><small v-if="form.role==='student'">学院与专业按新疆工程学院2026年招生专业口径联动；2026年新设学院待学校正式公布专业归属后更新。</small></label></template><label>用户名<input v-model="form.username" required placeholder="用户名"></label>
+*** End Patch

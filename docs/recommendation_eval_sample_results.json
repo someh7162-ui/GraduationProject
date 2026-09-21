@@ -1,0 +1,52 @@
+{
+  "dataset": "Synthetic pipeline smoke test - not real-world evidence",
+  "synthetic": true,
+  "cutoff": "2026-09-21T00:00:00+00:00",
+  "users": 3,
+  "contents": 12,
+  "note": "Macro-average; Precision@K divides by K even with fewer candidates. All strategies use identical access and expiry filters.",
+  "results": {
+    "interest": {
+      "5": {
+        "precision": 0.466667,
+        "recall": 1.0,
+        "hit_rate": 1.0,
+        "ndcg": 0.795618
+      },
+      "10": {
+        "precision": 0.233333,
+        "recall": 1.0,
+        "hit_rate": 1.0,
+        "ndcg": 0.795618
+      }
+    },
+    "identity": {
+      "5": {
+        "precision": 0.466667,
+        "recall": 1.0,
+        "hit_rate": 1.0,
+        "ndcg": 0.871049
+      },
+      "10": {
+        "precision": 0.233333,
+        "recall": 1.0,
+        "hit_rate": 1.0,
+        "ndcg": 0.871049
+      }
+    },
+    "hybrid": {
+      "5": {
+        "precision": 0.466667,
+        "recall": 1.0,
+        "hit_rate": 1.0,
+        "ndcg": 0.897809
+      },
+      "10": {
+        "precision": 0.233333,
+        "recall": 1.0,
+        "hit_rate": 1.0,
+        "ndcg": 0.897809
+      }
+    }
+  }
+}
