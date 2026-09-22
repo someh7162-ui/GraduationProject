@@ -29,6 +29,10 @@ LABELS = {
 }
 
 
+class RunCancelled(Exception):
+    """Raised at a durable checkpoint after the user requests cancellation."""
+
+
 def questions(missing, policy, metrics=None):
     all_rules = policy['common_rules'] + [r for b in policy['branches'] for r in b['rules']]
     result = []
@@ -42,19 +46,34 @@ def questions(missing, policy, metrics=None):
     return result
 
 
-def run(engine, session_id, user_id):
-    def checkpoint(payload, status='running'):
+def run(engine, session_id, user_id, user=None):
+    def checkpoint(payload, status='running', allow_cancel=False):
         with engine.begin() as conn:
             current = store.get(conn, store.sessions, session_id, user_id)
+            if current['payload'].get('cancel_requested') and not allow_cancel:
+                raise RunCancelled()
+            payload['cancel_requested'] = False
             store.save(conn, store.sessions, current, payload, status)
 
     with engine.connect() as conn:
         session = store.get(conn, store.sessions, session_id, user_id)
     payload = copy.deepcopy(session['payload'])
+    if payload.get('cancel_requested'):
+        payload['cancel_requested'] = False
+        payload['error'] = None
+        for event in payload.get('tools', []):
+            if event.get('status') == 'running':
+                event['status'] = 'cancelled'
+        payload['messages'].append({'role': 'assistant', 'text': '已停止本次生成。你可以修改问题后继续，或重新生成上一条回答。', 'at': store.now(), 'stopped': True})
+        checkpoint(payload, 'cancelled', allow_cancel=True)
+        return
     previous_pending = payload.get('pending', [])
     payload.setdefault('runs', []).append({'tools': payload.get('tools', []), 'status': session['status'], 'at': store.now()})
     payload.update(pending=[], suggested_facts={}, error=None, tools=[], mode='model-tools' if llm.enabled() else 'local-tools')
     context = payload['context']
+    last_user = next((message for message in reversed(payload['messages']) if message.get('role') == 'user'), {'text': ''})
+    preferences = last_user.get('preferences') or payload.get('preferences') or {}
+    payload['preferences'] = {'deep_think': bool(preferences.get('deep_think')), 'web_search': bool(preferences.get('web_search'))}
     if not context.get('selection_year') or not context.get('academic_year'):
         payload['messages'].append({'role': 'assistant', 'text': '请明确评选年度与考核学年。评选年度和成绩所属学年可能不同。'})
         payload['pending'] = [{'field': 'selection_year', 'label': '评选年度', 'kind': 'context'}, {'field': 'academic_year', 'label': '考核学年', 'kind': 'context'}]
@@ -62,10 +81,18 @@ def run(engine, session_id, user_id):
         return
     completed, policy, snapshot, report, review_log = set(), None, None, None, []
     try:
-        last_message = payload['messages'][-1]
-        if previous_pending and llm.enabled() and last_message.get('text') and not last_message.get('facts_submitted'):
+        if preferences.get('web_search') and user and last_user.get('text'):
+            event = {'name': 'campus_search', 'summary': '检索校园资料库与已登记官方来源', 'at': store.now(), 'status': 'running'}
+            payload['tools'].append(event)
+            checkpoint(payload)
+            from app.campus import Ask, rag
+            search_result = rag(Ask(question=last_user['text']), user)
+            payload['web_search_result'] = search_result
+            event['status'] = 'done'
+            checkpoint(payload)
+        if previous_pending and llm.enabled() and last_user.get('text') and not last_user.get('facts_submitted'):
             answer = llm.call_structured('suggest_facts', '仅从用户回复提取待补充事实，不能用政策要求替用户填写。排名必须明确 rank、total、scope、type；缺失项保留空值。返回字典，每个值符合 Fact schema。',
-                {'facts_json': {'type': 'string'}}, ['facts_json'], {'reply': last_message['text'], 'pending': previous_pending, 'schema': Fact.model_json_schema()})
+                {'facts_json': {'type': 'string'}}, ['facts_json'], {'reply': last_user['text'], 'pending': previous_pending, 'schema': Fact.model_json_schema()})
             import json
             suggestions = json.loads(answer['facts_json'])
             allowed = {q['field'] for q in previous_pending if q['kind'] != 'context'}
@@ -88,7 +115,7 @@ def run(engine, session_id, user_id):
                 available = ['request_information']
             else:
                 available = [name for name in ('prepare_guidance', 'review_assessment') if name not in completed]
-            tool = llm.choose_tool({n: DESCRIPTIONS[n] for n in available}, {'context': context, 'completed': sorted(completed), 'question': payload['messages'][-1]['text'], 'missing': report['missing'] if report else []}) if llm.enabled() else available[0]
+            tool = llm.choose_tool({n: DESCRIPTIONS[n] for n in available}, {'context': context, 'completed': sorted(completed), 'question': last_user['text'], 'missing': report['missing'] if report else [], 'deep_think': bool(preferences.get('deep_think'))}) if llm.enabled() else available[0]
             event = {'name': tool, 'summary': DESCRIPTIONS[tool], 'at': store.now(), 'status': 'running'}
             payload['tools'].append(event)
             checkpoint(payload)
@@ -108,7 +135,7 @@ def run(engine, session_id, user_id):
                 try:
                     vectorizer = TfidfVectorizer(analyzer='char', ngram_range=(2,4))
                     matrix = vectorizer.fit_transform([c['text'] for c in clauses])
-                    scores = cosine_similarity(vectorizer.transform([payload['messages'][-1]['text']]), matrix)[0]
+                    scores = cosine_similarity(vectorizer.transform([last_user['text']]), matrix)[0]
                     order = sorted(range(len(clauses)), key=lambda i: scores[i], reverse=True)[:5]
                     payload['retrieved_clauses'] = [dict(clauses[i], similarity=float(scores[i])) for i in order]
                 except ValueError:
@@ -167,6 +194,17 @@ def run(engine, session_id, user_id):
                     store.save(conn, store.sessions, current, payload, 'completed')
                 return
         raise ValueError('已达到本次 12 次工具调用上限，请重试或核对输入')
+    except RunCancelled:
+        with engine.begin() as conn:
+            current = store.get(conn, store.sessions, session_id, user_id)
+            cancelled = copy.deepcopy(current['payload'])
+            cancelled['cancel_requested'] = False
+            cancelled['error'] = None
+            for event in cancelled.get('tools', []):
+                if event.get('status') == 'running':
+                    event['status'] = 'cancelled'
+            cancelled['messages'].append({'role': 'assistant', 'text': '已停止本次生成。你可以修改问题后继续，或重新生成上一条回答。', 'at': store.now(), 'stopped': True})
+            store.save(conn, store.sessions, current, cancelled, 'cancelled')
     except Exception as exc:
         # Keep internal exception details out of user-visible payloads.
         safe = str(exc) if isinstance(exc, ValueError) else '模型或工具暂时不可用，进度已保存，请重试。'

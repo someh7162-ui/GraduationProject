@@ -222,6 +222,44 @@ def test_restart_recovery_and_policy_review_guards(client):
     assert client.put('/policies/'+record['id'],headers=admin,json=broken).status_code==422
 
 
+def test_session_management_preferences_and_event_stream(client):
+    student=account(client)
+    draft={'school':'模拟学校','scholarship':'模拟奖学金','selection_year':2026,'academic_year':YEAR}
+    identifier=session(client,student,draft)
+    renamed=client.patch(f'/assistant/sessions/{identifier}',headers=student,json={'title':'我的模拟评估'})
+    assert renamed.status_code==200 and renamed.json()['payload']['title']=='我的模拟评估'
+    response=client.post(f'/assistant/sessions/{identifier}/messages',headers=student,json={'text':'请核对资格','deep_think':True})
+    assert response.status_code==200
+    record=client.get(f'/assistant/sessions/{identifier}',headers=student).json()
+    assert record['payload']['preferences']=={'deep_think':True,'web_search':False}
+    assert record['status']=='policy_missing'
+    regenerated=client.post(f'/assistant/sessions/{identifier}/regenerate',headers=student)
+    assert regenerated.status_code==200
+    with client.stream('GET',f'/assistant/sessions/{identifier}/events?after=0',headers=student) as stream:
+        body=''.join(stream.iter_text())
+    assert stream.status_code==200
+    assert 'event: state' in body and 'event: done' in body and 'event: message' in body
+    assert client.delete(f'/assistant/sessions/{identifier}',headers=student).status_code==204
+    assert client.get(f'/assistant/sessions/{identifier}',headers=student).status_code==404
+
+
+def test_session_cancel_is_cooperative_and_owned(client):
+    student,other=account(client),account(client)
+    draft={'school':'模拟学校','scholarship':'模拟奖学金','selection_year':2026,'academic_year':YEAR}
+    identifier=session(client,student,draft)
+    with engine.begin() as conn:
+        record=store.get(conn,store.sessions,identifier)
+        store.save(conn,store.sessions,record,record['payload'],'running')
+    assert client.post(f'/assistant/sessions/{identifier}/cancel',headers=other).status_code==404
+    cancelling=client.post(f'/assistant/sessions/{identifier}/cancel',headers=student)
+    assert cancelling.status_code==200 and cancelling.json()['status']=='cancelling'
+    assert client.delete(f'/assistant/sessions/{identifier}',headers=student).status_code==409
+    from app.academic.assistant import run
+    run(engine,identifier,cancelling.json()['user_id'] if 'user_id' in cancelling.json() else client.get('/me',headers=student).json()['id'])
+    cancelled=client.get(f'/assistant/sessions/{identifier}',headers=student).json()
+    assert cancelled['status']=='cancelled' and cancelled['payload']['messages'][-1]['stopped'] is True
+
+
 def test_year_history_and_missing_rank_denominator():
     draft=PolicyDraft(title='模拟',school='模拟',selection_year=2026,academic_year=YEAR,audience='模拟',clauses=[{'id':'c','text':'测试','locator':'1'}],common_rules=[{'id':'r','label':'排名','clause_id':'c','field':'comprehensive_rank_ratio','operator':'le','value':0.1,'scope':'专业'}]).model_dump()
     profile={'courses':[],'facts':{'comprehensive_rank':{**fact({'rank':1}),'confirmed':True,'sources':[]}}}

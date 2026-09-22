@@ -1,16 +1,17 @@
 import copy
+import asyncio
 import hashlib
 import json
 import os
 import uuid
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from . import store, llm
 from sqlalchemy import select, text
 from app.access import classes, can_manage_class, require_class, profile_identity, validate_identity, IDENTITY_FIELDS
-from .schemas import ConfirmImport, ProfileUpdate, PolicyDraft, SessionCreate, Message, Fact, CourseCorrection, ClassRankingConfirm
+from .schemas import ConfirmImport, ProfileUpdate, PolicyDraft, SessionCreate, SessionRename, Message, Fact, CourseCorrection, ClassRankingConfirm
 from .documents import parse_transcript, text_pages, merge_courses, course_key
 from .assistant import run
 from .class_ranking import parse_score_image, annual_ranking
@@ -358,7 +359,7 @@ def register(app, engine, current):
     @router.post('/assistant/sessions')
     def new_session(body: SessionCreate, user=Depends(current)):
         with engine.begin() as conn:
-            return store.create(conn, store.sessions, user['id'], {'context': body.model_dump(), 'messages': [], 'pending': [], 'tools': [], 'assessment_id': None}, 'ready')
+            return store.create(conn, store.sessions, user['id'], {'context': body.model_dump(), 'title': '', 'messages': [], 'pending': [], 'tools': [], 'assessment_id': None, 'preferences': {'deep_think': False, 'web_search': False}, 'cancel_requested': False}, 'ready')
 
     @router.get('/assistant/sessions/{identifier}')
     def get_session(identifier: str, user=Depends(current)):
@@ -374,14 +375,110 @@ def register(app, engine, current):
             if body.facts:
                 merge_facts(conn, user['id'], body.facts)
             payload = copy.deepcopy(record['payload'])
-            payload['messages'].append({'role': 'user', 'text': body.text or ('已确认补充信息' if body.facts else '继续评估'), 'at': store.now(), 'facts_submitted': bool(body.facts)})
+            preferences = {'deep_think': body.deep_think, 'web_search': body.web_search}
+            payload['preferences'] = preferences
+            if not body.web_search:
+                payload['web_search_result'] = None
+            payload['cancel_requested'] = False
+            payload['messages'].append({'role': 'user', 'text': body.text or ('已确认补充信息' if body.facts else '继续评估'), 'at': store.now(), 'facts_submitted': bool(body.facts), 'preferences': preferences})
             for key in ('selection_year', 'academic_year'):
                 if getattr(body, key) is not None:
                     payload['context'][key] = getattr(body, key)
             payload['assessment_id'] = None
             result = store.save(conn, store.sessions, record, payload, 'running')
-        background.add_task(run, engine, identifier, user['id'])
+        background.add_task(run, engine, identifier, user['id'], user)
         return result
+
+    @router.post('/assistant/sessions/{identifier}/cancel')
+    def cancel(identifier: str, user=Depends(current)):
+        with engine.begin() as conn:
+            record = store.get(conn, store.sessions, identifier, user['id'])
+            if record['status'] not in ('running', 'cancelling'):
+                return record
+            payload = copy.deepcopy(record['payload'])
+            payload['cancel_requested'] = True
+            return store.save(conn, store.sessions, record, payload, 'cancelling')
+
+    @router.post('/assistant/sessions/{identifier}/regenerate')
+    def regenerate(identifier: str, background: BackgroundTasks, user=Depends(current)):
+        with engine.begin() as conn:
+            record = store.get(conn, store.sessions, identifier, user['id'])
+            if record['status'] in ('running', 'cancelling'):
+                raise HTTPException(409, '回答正在生成，请先停止')
+            payload = copy.deepcopy(record['payload'])
+            messages = payload.get('messages', [])
+            last_user_index = next((index for index in range(len(messages) - 1, -1, -1) if messages[index].get('role') == 'user'), None)
+            if last_user_index is None:
+                raise HTTPException(409, '当前会话还没有可以重新生成的问题')
+            payload['messages'] = messages[:last_user_index + 1]
+            payload['assessment_id'] = None
+            payload['cancel_requested'] = False
+            result = store.save(conn, store.sessions, record, payload, 'running')
+        background.add_task(run, engine, identifier, user['id'], user)
+        return result
+
+    @router.patch('/assistant/sessions/{identifier}')
+    def rename_session(identifier: str, body: SessionRename, user=Depends(current)):
+        with engine.begin() as conn:
+            record = store.get(conn, store.sessions, identifier, user['id'])
+            payload = copy.deepcopy(record['payload'])
+            payload['title'] = body.title.strip()
+            return store.save(conn, store.sessions, record, payload)
+
+    @router.delete('/assistant/sessions/{identifier}', status_code=204)
+    def delete_session(identifier: str, user=Depends(current)):
+        with engine.begin() as conn:
+            record = store.get(conn, store.sessions, identifier, user['id'])
+            if record['status'] in ('running', 'cancelling'):
+                raise HTTPException(409, '请先停止正在生成的回答')
+            conn.execute(store.sessions.delete().where(store.sessions.c.id == identifier, store.sessions.c.user_id == user['id']))
+
+    @router.get('/assistant/sessions/{identifier}/events')
+    async def session_events(identifier: str, request: Request, after: int = 0, user=Depends(current)):
+        with engine.connect() as conn:
+            store.get(conn, store.sessions, identifier, user['id'])
+
+        def event(name, data):
+            return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False, allow_nan=False)}\n\n"
+
+        async def generate():
+            revision = -1
+            delivered = max(0, after)
+            idle_ticks = 0
+            while not await request.is_disconnected():
+                with engine.connect() as conn:
+                    record = store.get(conn, store.sessions, identifier, user['id'])
+                if record['revision'] != revision:
+                    revision = record['revision']
+                    messages = record['payload'].get('messages', [])
+                    if len(messages) > delivered:
+                        state = copy.deepcopy(record)
+                        state['status'] = 'running'
+                        state['payload']['messages'] = messages[:delivered]
+                        yield event('state', state)
+                        for message_data in messages[delivered:]:
+                            base = {key: value for key, value in message_data.items() if key != 'text'}
+                            base['text'] = ''
+                            yield event('message', base)
+                            text_value = message_data.get('text', '')
+                            for start in range(0, len(text_value), 10):
+                                if await request.is_disconnected():
+                                    return
+                                yield event('delta', {'text': text_value[start:start + 10]})
+                                await asyncio.sleep(0.012)
+                            delivered += 1
+                    yield event('state', record)
+                    idle_ticks = 0
+                    if record['status'] not in ('running', 'cancelling'):
+                        yield event('done', {'status': record['status']})
+                        return
+                else:
+                    idle_ticks += 1
+                    if idle_ticks % 40 == 0:
+                        yield ': keep-alive\n\n'
+                await asyncio.sleep(0.25)
+
+        return StreamingResponse(generate(), media_type='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
     @router.post('/assistant/sessions/{identifier}/interpret')
     def interpret(identifier: str, body: Message, user=Depends(current)):

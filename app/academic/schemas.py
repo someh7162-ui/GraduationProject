@@ -179,7 +179,13 @@ class SessionCreate(Strict):
 
 
 class Message(Strict):
-    text: str = Field(default='', max_length=3000)
+    text: str = Field(default='', max_length=4000)
     facts: dict[str, Fact] = Field(default_factory=dict)
     selection_year: int | None = Field(default=None, ge=2000, le=2200)
     academic_year: str | None = Field(default=None, pattern=r'^\d{4}-\d{4}$')
+    deep_think: bool = False
+    web_search: bool = False
+
+
+class SessionRename(Strict):
+    title: str = Field(min_length=1, max_length=80)
