@@ -1,11 +1,12 @@
 <script setup>
+import AppIcon from './AppIcon.vue'
 defineProps({ user: Object, activePage: String })
 defineEmits(['navigate','logout'])
 </script>
 <template>
   <header class="app-header">
-    <button class="brand-button" @click="$emit('navigate', 'ask')"><span class="brand-mark">C</span><span><strong>Campus AI</strong><small>教务服务</small></span></button>
-    <nav class="top-nav" aria-label="主导航"><button :class="{active: activePage === 'home'}" @click="$emit('navigate','home')">校园推荐</button><button :class="{active: activePage === 'activities'}" @click="$emit('navigate','activities')">活动</button><button :class="{active: activePage === 'info'}" @click="$emit('navigate','info')">校园资讯</button><button :class="{active: activePage === 'ask'}" @click="$emit('navigate','ask')">教务助手</button></nav>
-    <div class="header-actions"><span class="header-search">⌕<span>搜索校园信息</span></span><button class="avatar-button" @click="$emit('navigate','profile')">{{ user?.name?.slice(0, 1) || 'C' }}</button></div>
+    <button class="brand-button" aria-label="Campus AI 推荐首页" @click="$emit('navigate','home')"><span class="brand-mark"><AppIcon name="book" :size="23" /></span><span><strong>Campus <em>AI</em></strong><small>新疆工程学院 · 智慧校园</small></span></button>
+    <div class="header-context"><span class="header-divider"></span><span>校园生活，有序发生。</span></div>
+    <div class="header-actions"><button class="header-search" @click="$emit('navigate','campus-qa')"><AppIcon name="search" :size="17" /><span>搜索校园资料</span></button><button class="header-profile" aria-label="个人中心" @click="$emit('navigate','profile')"><span class="avatar-button">{{user?.name?.slice(0,1) || 'C'}}</span><span class="header-user-name">{{user?.name}}</span></button><button class="header-logout" title="退出登录" aria-label="退出登录" @click="$emit('logout')"><AppIcon name="logout" :size="18" /></button></div>
   </header>
 </template>
