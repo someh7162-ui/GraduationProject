@@ -19,6 +19,7 @@ dependencies = [
   "rapidocr>=3.9.2",
   "onnxruntime>=1.30.0",
   "pillow>=12.3.0",
+  "typesafe-sdk>=0.7.1,<0.8",
 ]
 
 [project.optional-dependencies]

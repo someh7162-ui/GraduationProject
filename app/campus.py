@@ -22,6 +22,7 @@ from app.source_metadata import content_active, source_details
 from app.rag_index import RagIndex
 from app.settings import jwt_secret, cors_origins
 from app.content_types import normalize_type, CONTENT_TYPES
+from app import jev
 ROOT=Path(__file__).resolve().parents[1]; STATIC=ROOT/'frontend'
 load_dotenv(ROOT / '.env')
 logging.basicConfig(level=os.getenv('LOG_LEVEL','INFO'))
@@ -250,9 +251,35 @@ def rebuild_rag(u=Depends(current)):
 def rag(x:Ask, u=Depends(current)):
     snapshot = _rag_index.get()
     sources = _rag_index.search(snapshot, u, x.question, float(os.getenv('RAG_SEMANTIC_MIN_SCORE', '0.30')))
+    gate = jev.evidence_sufficient(x.question, sources)
     answer = ('根据校园资料库：\n' + '\n\n'.join(f"[{i}]《{source['title']}》：{source['snippet']}" for i, source in enumerate(sources, 1))) if sources else RAG_REFUSAL
-    payload = {'answer': answer, 'sources': sources, 'grounded': bool(sources), 'model': 'local-hybrid-rrf'}
+    if gate['status'] == 'insufficient':
+        answer = '检索到了相关校园资料，但现有证据不足以可靠回答该问题。请核对原文或联系相关部门。'
+    elif gate['status'] == 'uncertain':
+        answer = '检索到了可能相关的资料，但证据尚不充分，暂不作出结论。请核对下方原文和适用条件。'
+    payload = {'answer': answer, 'sources': sources,
+               'grounded': bool(sources) and gate['status'] in {'sufficient', 'unchecked'},
+               'model': 'local-hybrid-rrf+jev-gate' if gate['source'] == 'jev' else 'local-hybrid-rrf',
+               'evidence': gate, 'evidence_probability': gate['probability']}
     return {**payload, 'answer_id': _cache_answer(payload, u['id'], snapshot.version)}
+
+
+@app.post('/assistant/ask')
+def assistant_ask(x:Ask, u=Depends(current)):
+    decision = jev.route_question(x.question)
+    route = decision['route']
+    if route == 'campus_qa':
+        return {'decision': decision, 'target_page': 'campus-qa', 'message': '已查询校园资料。',
+                'result': rag(x, u)}
+    # Navigation only: routing never authorizes actions or evaluates eligibility.
+    target, message = {
+        'scholarship': ('ask', '这个问题适合使用教务助手。进入后确认评选年度与考核学年，再开始资格初评。'),
+        'academic': ('academic', '可以在学业档案查看和核对自己的成绩及排名信息。'),
+        'recommendation': ('home', '可以在推荐首页查看当前可访问的校园活动、竞赛与资讯。'),
+        'other': (None, '暂未找到明确的校园服务入口。请补充具体需求，或关闭自动分流后查询校园资料。'),
+    }[route]
+    return {'decision': decision, 'target_page': target, 'message': message, 'result': None}
+
 
 
 @app.get('/rag/sources/{answer_id}')

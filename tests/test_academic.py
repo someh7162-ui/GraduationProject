@@ -50,8 +50,8 @@ def excel_file(score=91, credits=3):
     return output.getvalue()
 
 
-def import_grades(client, headers, **kwargs):
-    response = client.post('/documents', headers=headers, files={'file': ('模拟成绩.xlsx', excel_file(**kwargs))})
+def import_grades(client, headers, file_bytes=None, **kwargs):
+    response = client.post('/documents', headers=headers, files={'file': ('模拟成绩.xlsx', file_bytes if file_bytes is not None else excel_file(**kwargs))})
     assert response.status_code == 200, response.text
     document = response.json()
     preview = document['payload']['preview']
@@ -141,8 +141,10 @@ def test_policy_missing_year_scope_and_permissions(client):
 
 def test_duplicate_conflict_and_explicit_correction(client):
     student = account(client)
-    document = import_grades(client, student)
-    duplicate = client.post('/documents', headers=student, files={'file': ('重复.xlsx', excel_file())}).json()
+    # Reuse the exact upload: XLSX archives include generation timestamps.
+    original_bytes = excel_file()
+    document = import_grades(client, student, file_bytes=original_bytes)
+    duplicate = client.post('/documents', headers=student, files={'file': ('重复.xlsx', original_bytes)}).json()
     assert duplicate['id'] == document['id']
     altered = client.post('/documents', headers=student, files={'file': ('冲突.xlsx', excel_file(92))}).json()
     preview = altered['payload']['preview']

@@ -1,8 +1,8 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import AssessmentReport from './AssessmentReport.vue'
-const props = defineProps({request:Function,user:Object})
-const sessions = ref([]), session = ref(null), text = ref(''), error = ref(''), assessment = ref(null), inputs = ref({}), busy = ref(false)
+const props = defineProps({request:Function,user:Object,initialQuestion:{type:String,default:''}})
+const sessions = ref([]), session = ref(null), text = ref(props.initialQuestion), error = ref(''), assessment = ref(null), inputs = ref({}), busy = ref(false)
 const context = ref({school:'新疆工程学院',scholarship:'国家奖学金',selection_year:new Date().getFullYear(),academic_year:''})
 let timer, alive = true
 const statuses = {ready:'等待提问',running:'正在评估',waiting:'等待补充',policy_missing:'缺少适用政策',retryable:'可重试',completed:'已完成'}
@@ -49,7 +49,7 @@ async function interpret() {
   catch(e){error.value=e.message} finally{busy.value=false}
 }
 function rankInput(field) { if(!inputs.value[field])inputs.value[field]={rank:'',total:'',scope:''}; return inputs.value[field] }
-onMounted(async()=>{try{await load(); if(sessions.value.length)await select(sessions.value[0])}catch(e){error.value=e.message}})
+onMounted(async()=>{try{await load(); if(!props.initialQuestion && sessions.value.length)await select(sessions.value[0])}catch(e){error.value=e.message}})
 onUnmounted(()=>{alive=false;clearTimeout(timer)})
 </script>
 <template><section class="academic-view"><div class="assistant-heading"><div><p class="eyebrow blue">教务智能服务</p><h1>我能申请这个奖学金吗？</h1><p class="muted">按年度政策读取档案、计算指标，并在信息不足时向你追问。</p></div><button @click="newSession">新建评估</button></div>

@@ -33,3 +33,16 @@ os.environ["DEEPSEEK_API_KEY"] = ""
 os.environ["ACADEMIC_UPLOAD_DIR"] = str(Path(tempfile.gettempdir()) / f"academic_uploads_{os.getpid()}")
 
 os.environ["JWT_SECRET"] = "academic-test-only-secret-at-least-32-characters"
+
+# Ordinary tests must never call TypeSafe, even when a developer has a user API key.
+os.environ["JEV_ENABLED"] = "false"
+os.environ["TYPESAFE_API_KEY"] = ""
+
+import pytest
+
+@pytest.fixture(autouse=True)
+def block_live_jev(monkeypatch):
+    from typesafe_sdk import TypeSafeClient
+    def denied(*args, **kwargs):
+        raise AssertionError("Live Jev calls are forbidden in pytest")
+    monkeypatch.setattr(TypeSafeClient, "system_one", denied)

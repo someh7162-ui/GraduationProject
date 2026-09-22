@@ -202,3 +202,78 @@ def test_explanation_matches_actual_ranking_and_deletion_revokes_sources(rag_env
         conn.execute(campus.contents.delete().where(campus.contents.c.id == identifier))
     assert client.get('/rag/sources/' + result['answer_id']).status_code == 404
     assert not ask(client)['grounded']
+
+
+@pytest.mark.parametrize('probability,status,grounded', [(0.2,'insufficient',False),(0.65,'uncertain',False),(0.95,'sufficient',True)])
+def test_jev_gate_preserves_sources_and_cache(rag_env, monkeypatch, probability, status, grounded):
+    from app import jev
+    from types import SimpleNamespace
+    client, engine, index, user, add = rag_env
+    add()
+    monkeypatch.setenv('JEV_ENABLED', 'true')
+    monkeypatch.setenv('TYPESAFE_API_KEY', 'mock-key')
+    monkeypatch.setattr(jev, '_evaluate', lambda *args: SimpleNamespace(nouls={
+        'evidence': SimpleNamespace(noul=probability)}))
+    result = ask(client)
+    assert result['grounded'] is grounded
+    assert result['evidence']['status'] == status
+    assert result['sources'] and result['evidence_probability'] == probability
+    assert client.get('/rag/sources/' + result['answer_id']).json()['evidence'] == result['evidence']
+    if not grounded:
+        assert '根据校园资料库' not in result['answer']
+
+
+def test_jev_receives_only_authorized_sources(rag_env, monkeypatch):
+    from app import jev
+    from types import SimpleNamespace
+    client, engine, index, user, add = rag_env
+    add(title='星河奖学金公开申请指南')
+    add(title='星河奖学金内部名单', body='INTERNAL_PRIVATE_DATA', target_roles='["admin"]')
+    monkeypatch.setenv('JEV_ENABLED', 'true')
+    monkeypatch.setenv('TYPESAFE_API_KEY', 'mock-key')
+    captured = []
+    def fake(state, questions):
+        captured.append(state)
+        return SimpleNamespace(nouls={'evidence': SimpleNamespace(noul=0.95)})
+    monkeypatch.setattr(jev, '_evaluate', fake)
+    result = ask(client)
+    assert result['grounded'] and len(captured) == 1
+    assert 'INTERNAL_PRIVATE_DATA' not in str(captured)
+    assert '内部名单' not in str(captured)
+    assert set(captured[0]) == {'question', 'sources'}
+    assert len(captured[0]['sources']) == 1
+
+
+@pytest.mark.parametrize('route,target', [('scholarship','ask'),('academic','academic'),('recommendation','home'),('other',None)])
+def test_jev_navigation_never_runs_assessment(rag_env, monkeypatch, route, target):
+    from app import jev
+    client, engine, index, user, add = rag_env
+    monkeypatch.setattr(jev, 'route_question', lambda question: {
+        'route':route,'confidence':0.9,'source':'jev','probabilities':{},'reason':None})
+    monkeypatch.setattr(campus, 'rag', lambda *args: pytest.fail('Navigation must not run RAG'))
+    result = client.post('/assistant/ask', json={'question':'模拟问题'}).json()
+    assert result['target_page'] == target and result['result'] is None
+    assert 'assessment_id' not in result
+
+
+def test_unified_ask_fallback_and_failed_gate(rag_env, monkeypatch):
+    from app import jev
+    client, engine, index, user, add = rag_env
+    add()
+    monkeypatch.setenv('JEV_ENABLED', 'true')
+    monkeypatch.setenv('TYPESAFE_API_KEY', 'mock-key')
+    def offline(*args): raise TimeoutError('private exception body')
+    monkeypatch.setattr(jev, '_evaluate', offline)
+    result = client.post('/assistant/ask', json={'question':'星河奖学金'}).json()
+    assert result['decision']['source'] == 'fallback'
+    assert result['result']['sources'] and result['result']['grounded']
+    assert result['result']['evidence']['status'] == 'unchecked'
+    assert result['result']['evidence_probability'] is None
+    assert 'private exception body' not in str(result)
+
+
+def test_unified_ask_requires_login_and_valid_input(rag_env):
+    client, engine, index, user, add = rag_env
+    assert client.post('/assistant/ask', json={'question':'x'}).status_code == 422
+    app.dependency_overrides.pop(campus.current)
+    assert client.post('/assistant/ask', json={'question':'模拟问题'}).status_code == 401
